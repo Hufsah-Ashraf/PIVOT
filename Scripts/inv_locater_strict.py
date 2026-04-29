@@ -1,5 +1,6 @@
-###6.1..2025
-###changed  criteria for anchor node selection. Previously it only added a new anchor node to the list if it was either on the left side of the leftmost already found or to the right side of the rightmost already found (which I think is unnecessary..everything inside the inversion+flank existing in both orientations should qualify as an anchor)
+###30.3.2026
+#updated from inv_locater.py: The safe nodes need to fulfill the extra condition that all contigs traversing them do that in a consistent orientation to handle cases where one of the safe nodes falls inside a neighboring inverted region leading to one safe node being in same and the other being different from what we see in the reference.
+#this is very strict and therefore there are cases (particularly for sex chromosomes) where no safe node is found on the same contig as the inversion. But this is also the "safest" way. 
 import argparse
 import re
 from collections import defaultdict
@@ -32,61 +33,169 @@ def parse_gfa(filename):
 def find_safe_nodes_1(filename, node_lengths, node_unique_chars, safe_len_limit, excluded_haps):
 
 	"""
-	Read paths from the GFA and find nodes greater than a set threshold that exist only once across all assemblies
-	
+	Read paths from the GFA and find nodes longer than a set threshold
 	"""
 	
 	with open(filename, 'r') as gfa_file:
 		print ('storing paths')
 		paths = defaultdict(list)
+		paths_safe = defaultdict(list)#a dictionary that keeps into account the direction/s each "potentially safe" node was traversed in to be used later
 		for line_r in gfa_file:
 			line = line_r.split('\t')
 			if  line[0] in ['P']:
 				sample_info = line[1].split('#')
 				sample = sample_info[0]
 				haplotype = sample_info[1]
+				path=[]
+				path_safe=defaultdict(list)
+				for x in line[2].split(','):
+					key = x[:-1].strip()
+					direction = ['+' if i == '+' else '-' for i in x if i in ['+', '-']][0]
+					if (node_lengths[key] >= safe_len_limit and node_unique_chars[key]>= 3): #atleast 3 unique characters to exclude homopolymers
+						path.append(key)
+						path_safe[key].append(direction)
 				if f"{sample}#{haplotype}" not in excluded_haps:
-					path = [x[:-1].strip() for x in line[2].split(',') if (node_lengths[x[:-1].strip()] >= safe_len_limit and node_unique_chars[x[:-1].strip()] >= 3)] #atleast 3 unique characters to exclude homopolymers
-					paths[(sample,haplotype)] += path
-		paths_unique = defaultdict(list)
+					#path = [x[:-1].strip() for x in line[2].split(',') if (node_lengths[x[:-1].strip()] >= safe_len_limit and node_unique_chars[x[:-1].strip()] >= 3)] #atleast 3 unique characters to exclude homopolymers
+					paths[(sample,haplotype)] += path #we are appending the path to the same list since we don't need to make a contig level distinction here
+					paths_safe[(sample,haplotype)].append(path_safe)#since we want to keep the safe_node structure from the broken contigs separate
+		#paths_unique = defaultdict(list)
 		print('done storing paths')
-		return paths
+		return paths, paths_safe
 
-def find_safe_nodes_2(paths, node_lengths, safe_length):
+def find_safe_nodes_2(paths, paths_safe, node_lengths, safe_length):
 
 	"""
-	Read paths from the GFA and find nodes greater than a set threshold that exist only once across all assemblies
+	Find nodes longer than a set threshold that exist only once across all assemblies
+	"""
+
+	print('finding safe nodes')
 	
-	"""
-	print ('finding safe nodes')
-	safe_nodes = []
+	safe_nodes = set()
 	intersection_counter = 0
-	for sample in paths:
-		samp_node_list = []
-		sample_dict = Counter(paths[sample])#get how many times each element appears in the path
-		for it in sample_dict:
-			if sample_dict[it] == 1 and node_lengths[it]>=safe_length:
-				samp_node_list.append(it)
-		if len(safe_nodes) == 0 and intersection_counter == 0:
-	        #print ('safe_node is empty', safe_nodes)
-			safe_nodes = samp_node_list
-	        #print ('so adding', safe_nodes)
-		elif len(safe_nodes) == 0 and intersection_counter > 0:
-	        #print('since two samples showed no common node we can already finish')
-			break
-		elif len(safe_nodes) > 0:
-	        #print ('intersecting' , set(safe_nodes), 'and' , set(samp_node_list))
-			safe_nodes = list(set(safe_nodes) & set(samp_node_list))
-			intersection_counter +=1
-			#print ('leading to ', safe_nodes)
 
-	#print(safe_nodes)
-	safe_nodes_dict ={}
-	for safe in safe_nodes:
-		safe_nodes_dict[safe] = True
-	return (safe_nodes_dict)					
-			
-	
+	for sample in paths:
+		samp_node_set = set()
+		sample_dict = Counter(paths[sample])#get how many times each element appears in the path
+
+		for it in sample_dict:
+			if sample_dict[it] == 1 and node_lengths[it] >= safe_length:
+				samp_node_set.add(it) #the nodes passed the first two checks for being safe at this haplotpye level
+
+		if len(safe_nodes) == 0 and intersection_counter == 0:
+			safe_nodes = samp_node_set #we only have one haplotype yet so we are movign forward with all the nodes found using this one
+
+		elif len(safe_nodes) == 0 and intersection_counter > 0:
+			break #since at least two samples showed no common 'safe' nodes we can already finish
+
+		elif len(safe_nodes) > 0:
+			safe_nodes = safe_nodes & samp_node_set
+			intersection_counter += 1
+
+	if not safe_nodes:
+		raise ValueError("No safe nodes exist")
+	print (len(safe_nodes), 'safe nodes found)')
+
+	return find_safe_nodes_3(paths_safe, safe_nodes)
+
+
+def find_safe_nodes_3(paths_safe, safe_nodes):
+	"""
+	Filter paths_safe to only include nodes that we already extracted based on length criteria and uniqueness.
+	Returns paths_binary, a dict with the same structure as paths_safe,but only containing nodes in safe_nodes.
+	"""
+	paths_binary = defaultdict(list)
+	for s_hap, contigs in paths_safe.items(): #s_hap = (sample, haplotype)
+		#print(s_hap)
+		for contig in contigs: #for each dict of nodes in this contig
+			filtered = {}
+			for node, dir_list in contig.items():
+				if node in safe_nodes:
+					#print (node, 'in safenodes')
+					assert(len(dir_list) == 1) #redundant but just to be safe
+					# convert direction to binary
+					filtered[node] = 1 if dir_list[0] == '+' else 0
+			#if not filtered:
+			#	raise ValueError(f"No safe nodes exist because of {s_hap}")
+			paths_binary[s_hap].append(filtered)
+
+	return filter_consistent_nodes(paths_binary)
+
+def filter_consistent_nodes(paths_binary):
+	"""
+	paths_binary: dict { (sample,hap) : [ {node:0/1,...}, ...contigs ] }
+	reference_key: tuple identifying reference haplotype, e.g. ('CHM13','0')
+	"""
+	reference_key = (args.ref,'0')
+	# Step 1: build reference dict
+	reference = {}
+	assert(len(paths_binary[reference_key]) == 1)  # reference must be single contig
+
+	for contig in paths_binary[reference_key]:
+		for node, val in contig.items():
+			reference[node] = val
+
+	haplotype_node_sets = []
+
+	# Step 2: iterate over all haplotypes EXCEPT reference
+	for s_hap, contigs in paths_binary.items():
+
+		if s_hap == reference_key:
+			continue  # skip reference
+
+		contig_keep_sets = []
+
+		for contig in contigs:
+			nodes = list(contig.keys())
+			values = [contig[n] for n in nodes]
+			ref_values = [reference[n] for n in nodes]
+
+			# XOR per node
+			xor_values = [v ^ r for v, r in zip(values, ref_values)]
+
+			# split into same (0) and opposite (1)
+			zeros = {n for n, x in zip(nodes, xor_values) if x == 0}
+			ones  = {n for n, x in zip(nodes, xor_values) if x == 1}
+
+			# keep majority, remove inconsistent minority
+			total = len(zeros) + len(ones)
+			if total == 0:
+				continue  # safety, should not happen
+
+			zero_frac = len(zeros) / total
+			one_frac  = len(ones) / total
+
+			# require at least 70% dominance
+			if zero_frac >= 0.7:
+				keep_nodes = zeros
+				print(f"Haplotype {s_hap}: nodes removed from contig due to inconsistency: {ones}")
+
+			elif one_frac >= 0.7:
+				keep_nodes = ones
+				print(f"Haplotype {s_hap}: nodes removed from contig due to inconsistency: {zeros}")
+
+			else:
+				keep_nodes = set()
+				raise ValueError(f"Haplotype {s_hap}: contig doesn't have a clear 70/30 majority for consistent nodes")
+
+			if keep_nodes:
+				contig_keep_sets.append(keep_nodes)
+
+		if not contig_keep_sets:
+			raise ValueError(f"No consistent nodes in haplotype {s_hap}")
+
+		# union across contigs of this haplotype
+		haplotype_keep = set.union(*contig_keep_sets)
+		haplotype_node_sets.append(haplotype_keep)
+
+	# Step 3: intersection across haplotypes
+	final_nodes = set.intersection(*haplotype_node_sets)
+
+	if not final_nodes:
+		raise ValueError("No consistent nodes exist across all haplotypes")
+	print (len(final_nodes), ' safe nodes left after filtering')
+	return final_nodes
+
+
 def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start, inv_end, node_lengths, safe_nodes, flank):
 	"""
 	Read the reference path for the inversion
@@ -141,12 +250,12 @@ def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start,
 						right_safe_node = (node_id,direction)
 						break
 			if (left_safe_node == None or right_safe_node == None):
-			    if(safe_length > safe_lim): #only run this if here is margin to reduce safe length
-			        safe_length -= 5
-			        print ('since one side had no safe node, looking for safe nodes with lower length ', safe_length)
-			        safe_nodes = []
-			        safe_nodes = find_safe_nodes_2(paths, node_lengths, safe_length)
-			        read_reference_find_nodes(reference, paths,filename, chromosome, inv_start, inv_end, node_lengths, safe_nodes, flank)
+				if(safe_length > safe_lim): #only run this if here is margin to reduce safe length
+					safe_length -= 5
+					print ('since one side had no safe node, looking for safe nodes with lower length ', safe_length)
+					safe_nodes = []
+					safe_nodes = find_safe_nodes_2(paths, paths_safe,node_lengths, safe_length)
+					read_reference_find_nodes(reference, paths,filename, chromosome, inv_start, inv_end, node_lengths, safe_nodes, flank)
 			   
 			break	
 		else:
@@ -167,37 +276,7 @@ def find_anchors_from_nodes(nodes_of_interest, nodes_traversal):
 	for r in nodes_of_interest:
 		if len(nodes_of_interest[r]) > 1: #these would be the nodes that occurred in both forward and reverse orientation
 			anchor_path[r]= True
-			# #occurrences= [k for k, v in nodes_traversal.items() if (v == (r,'+') or v == (r,'-'))]
-			# #leftmost_occurrence = min([k for k, v in nodes_traversal.items() if v[0] == r]) #where was the node first found in the path
-			# #leftmost_occurrence_direction = [v[1] for k, v in nodes_traversal.items() if k == leftmost_occurrence][0] #what was the direction of the node when it was first found
-			# ##print('leftmost_occ_direction is', leftmost_occurrence_direction)
-			# dir_to_find = ['-' if leftmost_occurrence_direction == '+' else '+'][0]
-			# #print('direction to find is', dir_to_find)
-			# rightmost_occurrence = max([k for k, v in nodes_traversal.items() if (v[0],v[1]) == (r,dir_to_find)]) #where was the node last found in a reverse orientation
-			# #leftmost_occurrence_refstart= [v[2] for k, v in nodes_traversal.items() if k == leftmost_occurrence][0] # refstart and refend for the leftmost ocurrence of the respective node r
-			# #rightmost_occurrence_refend= [v[3] for k, v in nodes_traversal.items() if k == rightmost_occurrence][0]
-
-			# if (left is None and right is None) or (leftmost_occurrence < left and rightmost_occurrence > right): #it's either the first node found or its both directions are outside the ones already found
-			# 	left = int(leftmost_occurrence)
-			# 	right = int(rightmost_occurrence)
-			# 	#final_anchor = (r, leftmost_occurrence, rightmost_occurrence, leftmost_occurrence_refstart, rightmost_occurrence_refend)
-			# 	anchor_path[r] = True
-			# elif (leftmost_occurrence > left  and rightmost_occurrence < right): # both directions of this node exist inside the structure we already have found (a different version of the following if statement to allow for variants in the flanks)
-			# 	anchor_path[r] = True	
-				
-			#elif (leftmost_occurrence == left + len(anchor_path) and rightmost_occurrence == right - len(anchor_path)): # both directions of this node exist inside the structure we already have found
-			#	anchor_path[r] = True
-				
-			#elif (leftmost_occurrence == left + len(anchor_path) and rightmost_occurrence == right + len(anchor_path)):#for cases like chr8 where flanks don't have the conventional structure
-			#	anchor_path[r] = True
-				
-			#elif leftmost_occurrence < left or rightmost_occurrence > right:
-				#potential_anchors.append((r, leftmost_occurrence, rightmost_occurrence, leftmost_occurrence_refstart, rightmost_occurrence_refend))
-			#	left = int(leftmost_occurrence)
-			#	right = int(rightmost_occurrence)
-			# else:
-			# 	pass
-	#print(anchor_path)
+		
 	return(anchor_path)
 			
 
@@ -216,7 +295,7 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 	#sample_cons={('HG02145','2')}
 	for line_r in gfa:
 		line = line_r.split('\t')
-		if  line[0] in ['P'] :
+		if  line[0] in ['P']:
 			nodes_of_interest = defaultdict(list)
 			nodes_traversal = defaultdict(list)
 			sample_info = line[1].split('#')
@@ -432,18 +511,17 @@ if __name__== "__main__":
 
 
 	args = parser.parse_args()
-	
+	excluded_haps = {x.strip() for x in args.exhaps.split(',')}
 	
 	#parse the GFA
 	#print('Reading sequence information from GFA file...')
-	excluded_haps = {x.strip() for x in args.exhaps.split(',')}
 	node_lengths, node_unique_chars = parse_gfa(args.gfa)
-	paths= find_safe_nodes_1(args.gfa, node_lengths, node_unique_chars, args.safe_len_limit, excluded_haps)
+	paths, paths_safe= find_safe_nodes_1(args.gfa, node_lengths, node_unique_chars, args.safe_len_limit, excluded_haps)
 	safe_nodes = []
 	safe_length = args.safe_len
 	safe_lim = args.safe_len_limit
 	while len(safe_nodes)==0 and safe_length >=safe_lim: #to make sure the safe nodes we find are atleast a certain length
-		safe_nodes = find_safe_nodes_2(paths, node_lengths, safe_length)
+		safe_nodes = find_safe_nodes_2(paths, paths_safe, node_lengths, safe_length)
 		print ('looking for safe nodes with length atleast ', safe_length)
 		safe_length -=5
 	safe_length +=5 #because this is the value we last checked
@@ -460,9 +538,9 @@ if __name__== "__main__":
 		anchor_path = {}
 		i=0
 		while (len(anchor_path)==0 and int(args.flank)+i <= int(args.limit)):
-		    print ('looking for anchors with flank ', int(args.flank)+i, ' and safe length ', safe_length)
-		    anchor_path, left_safe_node, right_safe_node, inside_inv =  read_reference_find_nodes(args.ref, paths, args.gfa, chrom, inv_start, inv_end, node_lengths, safe_nodes, int(args.flank)+i) #because we update the safe length before after last use but here we need to give the one that was actually used)
-		    i+=10000
+			print ('looking for anchors with flank ', int(args.flank)+i, ' and safe length ', safe_length)
+			anchor_path, left_safe_node, right_safe_node, inside_inv =  read_reference_find_nodes(args.ref, paths, args.gfa, chrom, inv_start, inv_end, node_lengths, safe_nodes, int(args.flank)+i) #because we update the safe length before after last use but here we need to give the one that was actually used)
+			i+=10000
 			
 		writer1.write(str(chrom) + '\t' + str(inv_start) + '\t' + str(inv_end) +  '\t' + ' '. join(anchor_path.keys()) + '\t'+ ' '. join(inside_inv) +  '\n' )
 		#as we only deal with one inversion in one iteration of this script, we can delete the stored dictionaries to save space
