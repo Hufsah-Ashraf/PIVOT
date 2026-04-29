@@ -6,6 +6,8 @@ configfile: "Snakefile.json"
 
 
 w_dir = config["working_dir"]
+path_to_gfas = config["path_to_graphs"]
+path_to_bubblegun = config["bubble_detection"] 
 path_to_invs = config["path_to_invs"]
 chroms= config["chromosomes"]
 names = glob_wildcards(path_to_invs + "/{n}.bed")
@@ -57,7 +59,7 @@ def get_safe_len(wildcards):
 rule find_anchors:
     input:
         inv = path_to_invs+"/{c}:{i}.bed",
-	    gfa = path_to_gfas+"/20251014_hprc25272.p98-k311.{c}.gfa", #for example, pattern needs to be adjusted according to the input gfas being used
+	    gfa = path_to_gfas+"/{c}.gfa", #for example, pattern needs to be adjusted according to the input gfas being used
     output:
         node_sanity = w_dir+"/node_sanity/{c}:{i}-node_sanity.txt"
     params:
@@ -70,13 +72,13 @@ rule find_anchors:
     	mem_total_mb = 400000
     shell:
         """
-        python3 Scripts/inv_locator.py -invs {input.inv} -ref CHM13 -gfa -gfa {input.gfa} -hapchunks {params.hap_chunks} -anchor {params.final_anchor} -flank 70000 -safe_len {params.safe_len} -limit 100000 -safe_len_limit {params.safe_ -exhaps HG03456#1,HG03456#2 > {output.node_sanity}
+        python3 Scripts/inv_locator.py -invs {input.inv} -ref CHM13 -gfa -gfa {input.gfa} -hapchunks {params.hap_chunks} -anchor {params.final_anchor} -flank 70000 -safe_len {params.safe_len} -limit 100000 -safe_len_limit {params.safe_lim} -exhaps HG03456#1,HG03456#2 > {output.node_sanity}
         """
         
 #Step 2.1       
 rule get_bubbles:
     input:
-        gfa = path_to_gfas+"/20251014_hprc25272.p98-k311.{c}.gfa",
+        gfa = path_to_gfas+"/{c}.gfa",
     output:
         out = path_to_gfas+"/bubbles/{c}-bubbles.json",
         log = path_to_gfas+"/bubbles/{c}.log"
@@ -85,13 +87,13 @@ rule get_bubbles:
         mem_total_mb=30000
     shell:
         """
-        /home/ashraf/miniconda3/bin/BubbleGun -g {input.gfa} --log_file {output.log} bchains --bubble_json {output.out} 
+        {path_to_bubblegun} -g {input.gfa} --log_file {output.log} bchains --bubble_json {output.out} 
         """
 
 #Step 2.2                 
 rule get_non_rep_simple_bubbles:
     input:
-        gfa = path_to_gfas+"/20251014_hprc25272.p98-k311.{c}.gfa",
+        gfa = path_to_gfas+"/{c}.gfa",
         bubbles = path_to_gfas+'/bubbles/{c}-bubbles.json'
     output:
     	out = path_to_gfas+'/bubbles/{c}-nonrep-simple-bubbles.txt'
@@ -105,7 +107,7 @@ rule get_non_rep_simple_bubbles:
 #Step 2.3                 
 rule get_non_rep_bubbles:
     input:
-        gfa = path_to_gfas+"/20251014_hprc25272.p98-k311.{c}.gfa",
+        gfa = path_to_gfas+"/{c}.gfa",
         bubbles = path_to_gfas+'/bubbles/{c}-bubbles.json'
     output:
     	out = path_to_gfas+'/bubbles/{c}-nonrep-all-bubbles.txt'
@@ -263,7 +265,7 @@ rule produce_table_all::
 #Independent step       
 rule node_lengths:
     input:
-        gfa = path_to_gfas+"/20251014_hprc25272.p98-k311.{c}.gfa",
+        gfa = path_to_gfas+"/{c}.gfa",
     output:
         out =w_dir+"/node_lengths/{c}.txt",
     resources:
