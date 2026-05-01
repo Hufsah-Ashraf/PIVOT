@@ -1,6 +1,7 @@
-###30.3.2026
-#updated from inv_locater.py: The safe nodes need to fulfill the extra condition that all contigs traversing them do that in a consistent orientation to handle cases where one of the safe nodes falls inside a neighboring inverted region leading to one safe node being in same and the other being different from what we see in the reference.
-#this is very strict and therefore there are cases (particularly for sex chromosomes) where no safe node is found on the same contig as the inversion. But this is also the "safest" way. 
+###Latest correct version as of 1.05.2026
+#if no safe node is on the same contig as the inversion OR 
+#if the safe nodes are giving opposite info in terms of orientation (after making sure that the safe nodes are consistent, this should not happen)
+#that haplotype needs to be discarded from further analysis
 import argparse
 import re
 from collections import defaultdict
@@ -395,8 +396,8 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 							
 						else:
 							#raise Exception("Sorry, the safe nodes are not helping")
-							print(sample, haplotype, 'but safe nodes didnt help so considering it with broken contig cases')
-							seen_samples[(sample,haplotype)] = 0
+							print(sample, haplotype, 'but safe nodes didnt help so we need to discard this haplotype')
+							seen_samples[(sample,haplotype)] = 1 #mark it has handled
 							continue
 							
 						chunk = ' '.join(structure)
