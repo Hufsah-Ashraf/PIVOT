@@ -1,7 +1,8 @@
-###Latest correct version as of 1.05.2026
+#updated on 1.05.2026 from inv_locater_strict.py which is:
+##Latest correct version as of 1.05.2026
 #if no safe node is on the same contig as the inversion OR 
-#if the safe nodes are giving opposite info in terms of orientation (after making sure that the safe nodes are consistent, this should not happen)
-#that haplotype needs to be discarded from further analysis
+#if the safe nodes are giving opposite info in terms of orientation (although after making sure that the safe nodes orientation is consistent, this should not happen)
+#--->that haplotype needs to be discarded from further analysis
 import argparse
 import re
 from collections import defaultdict
@@ -63,13 +64,13 @@ def find_safe_nodes_1(filename, node_lengths, node_unique_chars, safe_len_limit,
 		print('done storing paths')
 		return paths, paths_safe
 
-def find_safe_nodes_2(paths, paths_safe, node_lengths, safe_length):
+def find_safe_nodes_2(paths, paths_safe, node_lengths):
 
 	"""
-	Find nodes longer than a set threshold that exist only once across all assemblies
+	Find nodes longer than the minimum allowed length (safe_len_limit, already checked in find_safe_nodes_1) that exist only once across all haplotypes
 	"""
 
-	print('finding safe nodes')
+	print('finding unique nodes')
 	
 	safe_nodes = set()
 	intersection_counter = 0
@@ -79,11 +80,11 @@ def find_safe_nodes_2(paths, paths_safe, node_lengths, safe_length):
 		sample_dict = Counter(paths[sample])#get how many times each element appears in the path
 
 		for it in sample_dict:
-			if sample_dict[it] == 1 and node_lengths[it] >= safe_length:
+			if sample_dict[it] == 1:
 				samp_node_set.add(it) #the nodes passed the first two checks for being safe at this haplotpye level
 
 		if len(safe_nodes) == 0 and intersection_counter == 0:
-			safe_nodes = samp_node_set #we only have one haplotype yet so we are movign forward with all the nodes found using this one
+			safe_nodes = samp_node_set #we only have one haplotype yet so we are moving forward with all the nodes found using this one
 
 		elif len(safe_nodes) == 0 and intersection_counter > 0:
 			break #since at least two samples showed no common 'safe' nodes we can already finish
@@ -189,15 +190,15 @@ def filter_consistent_nodes(paths_binary):
 		haplotype_node_sets.append(haplotype_keep)
 
 	# Step 3: intersection across haplotypes
-	final_nodes = set.intersection(*haplotype_node_sets)
+	final_safe_nodes = set.intersection(*haplotype_node_sets)
 
-	if not final_nodes:
+	if not final_safe_nodes:
 		raise ValueError("No consistent nodes exist across all haplotypes")
-	print (len(final_nodes), ' safe nodes left after filtering')
-	return final_nodes
+	print (len(final_safe_nodes), ' safe nodes left after filtering')
+	return final_safe_nodes
 
 
-def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start, inv_end, node_lengths, safe_nodes, flank):
+def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start, inv_end, node_lengths, final_safe_nodes, flank, safe_length, safe_length_limit):
 	"""
 	Read the reference path for the inversion
 	belonging chromosome and keep a track of the 
@@ -207,9 +208,12 @@ def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start,
 	start = int(inv_start)-flank
 	end = int(inv_end)+flank
 	node_counts = defaultdict(int)
-	global safe_length
-	global safe_lim
-	print ('safe_length is ', safe_length, ' and safe_lim is ', safe_lim)
+	print ('safe_length is ', safe_length)
+	###now we need to extract the nodes fulfilling the node length criteria (safe_length) from our list of final_safe_nodes (because these are selected based on the minimum allowed length but we need to try with longer nodes i.e. length set by the user, first and keep decreasing the length threshold until we find nodes or we hit the lowest allowed length)
+	safe_nodes=[] #these are the safe nodes for this iteration of the function
+	for f in final_safe_nodes:
+		if node_lengths[f]>=safe_length:
+			safe_nodes.append(f)
 
 	for line_r in gfa_file:
 		line = line_r.split('\t')
@@ -236,7 +240,7 @@ def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start,
 				ref_end += node_length #see where this new node ends
 				nodes_traversal[node_num] = (node_id, direction, ref_start, ref_end)  # keep a record of when this node appeared in the path and in which direction)
 				#now check where we are w.r.t to the point of start
-				if node_id in safe_nodes and lock_left == False:
+				if node_id in safe_nodes and lock_left == False: #todo: update this so that we have a list of left_safe_nodes instead of having only one 
 					left_safe_node = (node_id,direction)
 				if (ref_end >= start and ref_start <= end): ##we are inside the inversion+flank region
 					#ref_path.append(node_id)
@@ -246,17 +250,17 @@ def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start,
 					
 					if direction not in nodes_of_interest[node_id]:
 						nodes_of_interest[node_id].append(direction) # keep unique orientations for each node traversed
-				elif (ref_start > end and lock_left == True): #now we need to look for the safe node on right side
+				elif (ref_start > end and lock_left == True): #now we need to look for the safe node on right side #todo: update this so that we have a list of right_safe_nodes instead of having only one
 					if node_id in safe_nodes:
 						right_safe_node = (node_id,direction)
 						break
 			if (left_safe_node == None or right_safe_node == None):
-				if(safe_length > safe_lim): #only run this if here is margin to reduce safe length
+				if(safe_length > safe_length_limit): #only run this if here is margin to reduce safe length
 					safe_length -= 5
 					print ('since one side had no safe node, looking for safe nodes with lower length ', safe_length)
-					safe_nodes = []
-					safe_nodes = find_safe_nodes_2(paths, paths_safe,node_lengths, safe_length)
-					read_reference_find_nodes(reference, paths,filename, chromosome, inv_start, inv_end, node_lengths, safe_nodes, flank)
+					#safe_nodes = []
+					#safe_nodes = find_safe_nodes_2(paths, paths_safe,node_lengths, safe_length)
+					read_reference_find_nodes(reference, paths,filename, chromosome, inv_start, inv_end, node_lengths, final_safe_nodes, flank, safe_length, safe_length_limit)
 			   
 			break	
 		else:
@@ -352,11 +356,11 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 						if len(nodes_of_interest[r]) > 1:
 							#occurrences= [k for k, v in nodes_traversal.items() if (v == (r,'+') or v == (r,'-'))]
 							leftmost_occurrence = min([k for k, v in nodes_traversal.items() if v[0] == r]) #where was the node first found in the path
-							leftmost_occurrence_direction = [v[1] for k, v in nodes_traversal.items() if k == leftmost_occurrence][0] #what 														was the direction of the node when it was first found
+							leftmost_occurrence_direction = [v[1] for k, v in nodes_traversal.items() if k == leftmost_occurrence][0] #what was the direction of the node when it was first found
 							#print('leftmost_occ_direction is', leftmost_occurrence_direction)
 							dir_to_find = ['-' if leftmost_occurrence_direction == '+' else '+'][0]
 							#print('direction to find is', dir_to_find)
-							rightmost_occurrence = max([k for k, v in nodes_traversal.items() if (v[0],v[1]) == (r,dir_to_find)]) #where was 												the node last found in a reverse orientation
+							rightmost_occurrence = max([k for k, v in nodes_traversal.items() if (v[0],v[1]) == (r,dir_to_find)]) #where was the node last found in a reverse orientation
 
 							if (left is None and right is None) or (leftmost_occurrence < left and rightmost_occurrence > right):
 								left = int(leftmost_occurrence)
@@ -364,7 +368,7 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 								
 							elif leftmost_occurrence < left and rightmost_occurrence < right:
 								#print (sample, ' ', haplotype, 'left occurrence to the left but rightmost not to the right')
-								#potential_anchors.append((r, leftmost_occurrence, rightmost_occurrence, leftmost_occurrence_refstart, 												rightmost_occurrence_refend))
+								#potential_anchors.append((r, leftmost_occurrence, rightmost_occurrence, leftmost_occurrence_refstart, rightmost_occurrence_refend))
 								left = int(leftmost_occurrence)
 								
 							elif leftmost_occurrence > left and rightmost_occurrence > right:
@@ -521,11 +525,11 @@ if __name__== "__main__":
 	safe_nodes = []
 	safe_length = args.safe_len
 	safe_lim = args.safe_len_limit
-	while len(safe_nodes)==0 and safe_length >=safe_lim: #to make sure the safe nodes we find are atleast a certain length
-		safe_nodes = find_safe_nodes_2(paths, paths_safe, node_lengths, safe_length)
-		print ('looking for safe nodes with length atleast ', safe_length)
-		safe_length -=5
-	safe_length +=5 #because this is the value we last checked
+	#while len(safe_nodes)==0 and safe_length >=safe_lim: #to make sure the safe nodes we find are atleast a certain length
+	safe_nodes = find_safe_nodes_2(paths, paths_safe, node_lengths) #get all nodes that are potentially safe
+	print ('looking for safe nodes with length atleast ', safe_lim)
+	#safe_length -=5
+	#safe_length +=5 #because this is the value we last checked
 	#print ('looking for safe nodes with length atleast ', args.safe_len)
 	#print('Done reading GFA.')
 	#start looking for each inversion
@@ -540,7 +544,7 @@ if __name__== "__main__":
 		i=0
 		while (len(anchor_path)==0 and int(args.flank)+i <= int(args.limit)):
 			print ('looking for anchors with flank ', int(args.flank)+i, ' and safe length ', safe_length)
-			anchor_path, left_safe_node, right_safe_node, inside_inv =  read_reference_find_nodes(args.ref, paths, args.gfa, chrom, inv_start, inv_end, node_lengths, safe_nodes, int(args.flank)+i) #because we update the safe length before after last use but here we need to give the one that was actually used)
+			anchor_path, left_safe_node, right_safe_node, inside_inv =  read_reference_find_nodes(args.ref, paths, args.gfa, chrom, inv_start, inv_end, node_lengths, safe_nodes, int(args.flank)+i, safe_length, safe_lim) 
 			i+=10000
 			
 		writer1.write(str(chrom) + '\t' + str(inv_start) + '\t' + str(inv_end) +  '\t' + ' '. join(anchor_path.keys()) + '\t'+ ' '. join(inside_inv) +  '\n' )

@@ -72,7 +72,7 @@ rule find_anchors:
     	mem_total_mb = 400000
     shell:
         """
-        python3 Scripts/inv_locator.py -invs {input.inv} -ref CHM13 -gfa -gfa {input.gfa} -hapchunks {params.hap_chunks} -anchor {params.final_anchor} -flank 70000 -safe_len {params.safe_len} -limit 100000 -safe_len_limit {params.safe_lim} -exhaps HG03456#1,HG03456#2 > {output.node_sanity}
+        python3 Scripts/inv_locator.py -invs {input.inv} -ref CHM13 -gfa {input.gfa} -hapchunks {params.hap_chunks} -anchor {params.final_anchor} -flank 70000 -safe_len {params.safe_len} -limit 100000 -safe_len_limit {params.safe_lim} -exhaps HG03456#1,HG03456#2 > {output.node_sanity}
         """
         
 #Step 2.1       
