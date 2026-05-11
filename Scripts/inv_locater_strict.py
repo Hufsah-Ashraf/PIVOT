@@ -1,13 +1,15 @@
-#updated on 1.05.2026 from inv_locater_strict.py which is:
+#11.05.2026 updated from inv_locater_strict.py which is:
 ##Latest correct version as of 1.05.2026
 #if no safe node is on the same contig as the inversion OR 
 #if the safe nodes are giving opposite info in terms of orientation (although after making sure that the safe nodes orientation is consistent, this should not happen)
 #--->that haplotype needs to be discarded from further analysis
+###this version makes the recursion efficient by first storing all nodes with length smalled than the specified threshold (safe_len_limit)- Now if we need to do a recursion of the safe nodes finding function using a lower safe_length, we just use this dictionary and with the help of node_lengths we can extract the nodes that fulfill our safe_length criteria
 import argparse
 import re
 from collections import defaultdict
 from collections import Counter
-import numpy as np 
+import numpy as np
+import sys 
 
 
 
@@ -94,7 +96,8 @@ def find_safe_nodes_2(paths, paths_safe, node_lengths):
 			intersection_counter += 1
 
 	if not safe_nodes:
-		raise ValueError("No safe nodes exist")
+		print("No safe nodes exist")
+		sys.exit(0)
 	print (len(safe_nodes), 'safe nodes found)')
 
 	return find_safe_nodes_3(paths_safe, safe_nodes)
@@ -127,7 +130,7 @@ def filter_consistent_nodes(paths_binary):
 	paths_binary: dict { (sample,hap) : [ {node:0/1,...}, ...contigs ] }
 	reference_key: tuple identifying reference haplotype, e.g. ('CHM13','0')
 	"""
-	reference_key = (args.ref,'0')
+	reference_key = (args.ref,args.ref_hap)
 	# Step 1: build reference dict
 	reference = {}
 	assert(len(paths_binary[reference_key]) == 1)  # reference must be single contig
@@ -512,12 +515,14 @@ if __name__== "__main__":
 	parser.add_argument('-safe_len', metavar='SAFE', type=int, required=True, help='The length of the safe node to consider')
 	parser.add_argument('-safe_len_limit', metavar='SAFE_LIM', type=int, required=True, help='The smallest length allowed for finding safe nodes')
 	parser.add_argument('-ref', metavar='REFERENCE', type=str, required=True, help='The haplotype to consider as reference')
-	parser.add_argument('-exhaps', metavar='EXCLUDED', type=str, required=True, help='The haplotypes to be excluded for the analysis')
+	parser.add_argument('-ref_hap', metavar='REF_HAP', type=str, required=True, help='The number of the haplotype to consider as reference i.e. 0,1,2 etc')
+	parser.add_argument('-exhaps', metavar='EXCLUDED', type=str, default='', help='The haplotypes to be excluded for the analysis')
 
 
 	args = parser.parse_args()
-	excluded_haps = {x.strip() for x in args.exhaps.split(',')}
-	
+	excluded_haps = ({x.strip() for x in args.exhaps.split(',')}
+    if args.exhaps
+    else set())	
 	#parse the GFA
 	#print('Reading sequence information from GFA file...')
 	node_lengths, node_unique_chars = parse_gfa(args.gfa)
