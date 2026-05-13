@@ -1,9 +1,7 @@
-#11.05.2026 updated from inv_locater_strict.py which is:
-##Latest correct version as of 1.05.2026
-#if no safe node is on the same contig as the inversion OR 
-#if the safe nodes are giving opposite info in terms of orientation (although after making sure that the safe nodes orientation is consistent, this should not happen)
-#--->that haplotype needs to be discarded from further analysis
-###this version makes the recursion efficient by first storing all nodes with length smalled than the specified threshold (safe_len_limit)- Now if we need to do a recursion of the safe nodes finding function using a lower safe_length, we just use this dictionary and with the help of node_lengths we can extract the nodes that fulfill our safe_length criteria
+#13.05.2026 updated from inv_locater_strict.py which is:
+##Latest correct version as of 11.05.2026
+###which makes the recursion efficient by first storing all nodes with length smalled than the specified threshold (safe_len_limit)- Now if we need to do a recursion of the safe nodes finding function using a lower safe_length, we just use this dictionary and with the help of node_lengths we can extract the nodes that fulfill our safe_length criteria
+##in this version instead of throwing a ValueError in case there is no 70,30 majority for safe nodes, we print out that a contig has this isuue and if no safe nodes are found for a haplotype we discard it from further analysis
 import argparse
 import re
 from collections import defaultdict
@@ -130,6 +128,7 @@ def filter_consistent_nodes(paths_binary):
 	paths_binary: dict { (sample,hap) : [ {node:0/1,...}, ...contigs ] }
 	reference_key: tuple identifying reference haplotype, e.g. ('CHM13','0')
 	"""
+	ex_haps_no_safe=set()
 	reference_key = (args.ref,args.ref_hap)
 	# Step 1: build reference dict
 	reference = {}
@@ -169,39 +168,42 @@ def filter_consistent_nodes(paths_binary):
 			zero_frac = len(zeros) / total
 			one_frac  = len(ones) / total
 
-			# require at least 70% dominance
-			if zero_frac >= 0.7:
+			# require at least 65% dominance
+			if zero_frac >= 0.65:
 				keep_nodes = zeros
-				print(f"Haplotype {s_hap}: nodes removed from contig due to inconsistency: {ones}")
+				#print(f"Haplotype {s_hap}: nodes removed from contig due to inconsistency: {ones}")
 
-			elif one_frac >= 0.7:
+			elif one_frac >= 0.65:
 				keep_nodes = ones
-				print(f"Haplotype {s_hap}: nodes removed from contig due to inconsistency: {zeros}")
+				#print(f"Haplotype {s_hap}: nodes removed from contig due to inconsistency: {zeros}")
 
 			else:
 				keep_nodes = set()
-				raise ValueError(f"Haplotype {s_hap}: contig doesn't have a clear 70/30 majority for consistent nodes")
+				print(f"Haplotype {s_hap}: one contig doesn't have a clear 70/30 majority for consistent nodes")
+
 
 			if keep_nodes:
 				contig_keep_sets.append(keep_nodes)
 
 		if not contig_keep_sets:
-			raise ValueError(f"No consistent nodes in haplotype {s_hap}")
-
+			print(f"No consistent nodes in haplotype {s_hap} so it won't be analyzed")
+			ex_haps_no_safe.append(s_hap[0]+'#'+s_hap[1])
+		else:
 		# union across contigs of this haplotype
-		haplotype_keep = set.union(*contig_keep_sets)
-		haplotype_node_sets.append(haplotype_keep)
+			haplotype_keep = set.union(*contig_keep_sets)
+			haplotype_node_sets.append(haplotype_keep)
 
 	# Step 3: intersection across haplotypes
 	final_safe_nodes = set.intersection(*haplotype_node_sets)
 
 	if not final_safe_nodes:
-		raise ValueError("No consistent nodes exist across all haplotypes")
+		print("No consistent nodes exist across all haplotypes")
+		sys.exit(0)
 	print (len(final_safe_nodes), ' safe nodes left after filtering')
-	return final_safe_nodes
+	return final_safe_nodes, ex_haps_no_safe
 
 
-def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start, inv_end, node_lengths, final_safe_nodes, flank, safe_length, safe_length_limit):
+def read_reference_find_nodes(reference, filename, chromosome, inv_start, inv_end, node_lengths, final_safe_nodes, flank, safe_length, safe_length_limit):
 	"""
 	Read the reference path for the inversion
 	belonging chromosome and keep a track of the 
@@ -263,7 +265,7 @@ def read_reference_find_nodes(reference, paths, filename, chromosome, inv_start,
 					print ('since one side had no safe node, looking for safe nodes with lower length ', safe_length)
 					#safe_nodes = []
 					#safe_nodes = find_safe_nodes_2(paths, paths_safe,node_lengths, safe_length)
-					read_reference_find_nodes(reference, paths,filename, chromosome, inv_start, inv_end, node_lengths, final_safe_nodes, flank, safe_length, safe_length_limit)
+					read_reference_find_nodes(reference,filename, chromosome, inv_start, inv_end, node_lengths, final_safe_nodes, flank, safe_length, safe_length_limit)
 			   
 			break	
 		else:
@@ -527,12 +529,19 @@ if __name__== "__main__":
 	#print('Reading sequence information from GFA file...')
 	node_lengths, node_unique_chars = parse_gfa(args.gfa)
 	paths, paths_safe= find_safe_nodes_1(args.gfa, node_lengths, node_unique_chars, args.safe_len_limit, excluded_haps)
+	del node_unique_chars
 	safe_nodes = []
 	safe_length = args.safe_len
 	safe_lim = args.safe_len_limit
 	#while len(safe_nodes)==0 and safe_length >=safe_lim: #to make sure the safe nodes we find are atleast a certain length
-	safe_nodes = find_safe_nodes_2(paths, paths_safe, node_lengths) #get all nodes that are potentially safe
 	print ('looking for safe nodes with length atleast ', safe_lim)
+	safe_nodes, ex_haps_no_safe = find_safe_nodes_2(paths, paths_safe, node_lengths) #get all nodes that are potentially safe and the haplotypes that should not be further analyzed
+	del paths
+	del paths_safe
+	excluded_haps = excluded_haps | ex_haps_no_safe
+	print('the following haplotypes would be excluded from analysis:')
+	for ex in excluded_haps:
+		print(ex)
 	#safe_length -=5
 	#safe_length +=5 #because this is the value we last checked
 	#print ('looking for safe nodes with length atleast ', args.safe_len)
@@ -549,13 +558,12 @@ if __name__== "__main__":
 		i=0
 		while (len(anchor_path)==0 and int(args.flank)+i <= int(args.limit)):
 			print ('looking for anchors with flank ', int(args.flank)+i, ' and safe length ', safe_length)
-			anchor_path, left_safe_node, right_safe_node, inside_inv =  read_reference_find_nodes(args.ref, paths, args.gfa, chrom, inv_start, inv_end, node_lengths, safe_nodes, int(args.flank)+i, safe_length, safe_lim) 
+			anchor_path, left_safe_node, right_safe_node, inside_inv =  read_reference_find_nodes(args.ref, args.gfa, chrom, inv_start, inv_end, node_lengths, safe_nodes, int(args.flank)+i, safe_length, safe_lim) 
 			i+=10000
 			
 		writer1.write(str(chrom) + '\t' + str(inv_start) + '\t' + str(inv_end) +  '\t' + ' '. join(anchor_path.keys()) + '\t'+ ' '. join(inside_inv) +  '\n' )
 		#as we only deal with one inversion in one iteration of this script, we can delete the stored dictionaries to save space
 		del node_lengths
-		del node_unique_chars
 		del safe_nodes
 		writer3 = open(args.hapchunks,'w')
 		writer3.write('chrom' + '\t' + 'inv_start' + '\t' + 'inv_end' + '\t' +'sample' + '\t' + 'haplotype' + '\t' + 'flank_value'+ '\t' +'hap_chunk' +  '\n' )	
