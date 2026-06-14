@@ -23,9 +23,12 @@ files <- list.files(files_link,pattern = "txt")
 full_df<-data.frame()
 warning(
   for (f in 1:length(files)){
+    if (file.info(paste0(files_link,files[f]))$size == 0) {
+      next
+    }
     df<-fread(paste0(files_link,files[f]))
     chrom<- str_split_fixed(files[f], pattern = ':', n=Inf)[1]
-    node_lengths<-fread(paste0(main_folder,'node_lengths/',chrom, '.txt'))
+    node_lengths<-fread(paste0(main_folder,'/node_lengths/',chrom, '.txt'))
     colnames(node_lengths)<-c('node', 'node_length')
     df<-left_join(df, node_lengths)
     df$sum<-rowSums(df[,c(2:5)])
@@ -107,7 +110,7 @@ warning(
     ###since I am not storing the exact anchor value anywhere except the hapchunks file, it is not possible to extract
     #it if the safe nodes didn't help, even if the anchor was found. So, for now I am implementing it in a way that
     # it just checks if the anchor was found or not but it should be updated in the anchor finding script to store the value in the anchor file
-    anchor<-fread(paste0(main_folder,'anchor/',inv,'-anchor.txt'), nrows = 1)
+    anchor<-fread(paste0(main_folder,'/anchors/',inv,'-anchor.txt'), nrows = 1)
     if(nrow(anchor)>0) {
       new_df$anchor_region<-as.character(!is.na(anchor[1,'anchor_path']))
     }
