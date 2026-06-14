@@ -1,4 +1,3 @@
-import pyximport
 import argparse
 import re
 from collections import defaultdict
@@ -108,7 +107,7 @@ if __name__== "__main__":
 	parser.add_argument('-bubbles', metavar='BUBBLES', required=True, help='A json file with bubbles')
 	#parser.add_argument('-out', metavar='OUTPUT', required=True, help='Output file to write the Forward Reverse counts for the nodes')
 	parser.add_argument('-gfa', metavar='GFA', required=True, help='graph in GFA format.')
-	parser.add_argument('-exhaps', metavar='EXCLUDED', type=str, required=True, help='The haplotypes to be excluded for the analysis')
+	parser.add_argument('-exhaps', metavar='EXCLUDED', type=str, default='', help='The haplotypes to be excluded for the analysis')
 
 	args = parser.parse_args()
 	excluded_haps = {x.strip() for x in args.exhaps.split(',')}

@@ -1,12 +1,10 @@
-#13.05.2026 updated from inv_locater_strict.py which is:
-##Latest correct version as of 11.05.2026
-###which makes the recursion efficient by first storing all nodes with length smalled than the specified threshold (safe_len_limit)- Now if we need to do a recursion of the safe nodes finding function using a lower safe_length, we just use this dictionary and with the help of node_lengths we can extract the nodes that fulfill our safe_length criteria
-##in this version instead of throwing a ValueError in case there is no 70,30 majority for safe nodes, we print out that a contig has this isuue and if no safe nodes are found for a haplotype we discard it from further analysis
+#09.06.2026 updated from inv_locater_strict.py which is:
+##Latest correct version as of 13.05.2026
+###which instead of throwing a ValueError in case there is no 70,30 majority for safe nodes, we print out that a contig has this isuue and if no safe nodes are found for a haplotype we discard it from further analysis
+##this version reduces both time and memory consumption as compared to the previous versions
 import argparse
-import re
 from collections import defaultdict
 from collections import Counter
-import numpy as np
 import sys 
 
 
@@ -40,7 +38,7 @@ def find_safe_nodes_1(filename, node_lengths, node_unique_chars, safe_len_limit,
 	
 	with open(filename, 'r') as gfa_file:
 		print ('storing paths')
-		paths = defaultdict(list)
+		paths = defaultdict(lambda: Counter())
 		paths_safe = defaultdict(list)#a dictionary that keeps into account the direction/s each "potentially safe" node was traversed in to be used later
 		for line_r in gfa_file:
 			line = line_r.split('\t')
@@ -48,17 +46,19 @@ def find_safe_nodes_1(filename, node_lengths, node_unique_chars, safe_len_limit,
 				sample_info = line[1].split('#')
 				sample = sample_info[0]
 				haplotype = sample_info[1]
-				path=[]
-				path_safe=defaultdict(list)
-				for x in line[2].split(','):
-					key = x[:-1].strip()
-					direction = ['+' if i == '+' else '-' for i in x if i in ['+', '-']][0]
-					if (node_lengths[key] >= safe_len_limit and node_unique_chars[key]>= 3): #atleast 3 unique characters to exclude homopolymers
-						path.append(key)
-						path_safe[key].append(direction)
 				if f"{sample}#{haplotype}" not in excluded_haps:
-					#path = [x[:-1].strip() for x in line[2].split(',') if (node_lengths[x[:-1].strip()] >= safe_len_limit and node_unique_chars[x[:-1].strip()] >= 3)] #atleast 3 unique characters to exclude homopolymers
-					paths[(sample,haplotype)] += path #we are appending the path to the same list since we don't need to make a contig level distinction here
+					path_safe=defaultdict(list)
+					for x in line[2].split(','):
+						x = x.strip()
+						direction = x[-1]
+						if direction not in ('+', '-'):
+							raise ValueError(f"Invalid node orientation: {x}")
+						key = x[:-1].strip()
+						if (node_lengths[key] >= safe_len_limit and node_unique_chars[key]>= 3): #atleast 3 unique characters to exclude homopolymers
+							paths[(sample,haplotype)][key] += 1 #get how many times each element appears in the path
+							path_safe[key].append(direction)
+		
+						#path = [x[:-1].strip() for x in line[2].split(',') if (node_lengths[x[:-1].strip()] >= safe_len_limit and node_unique_chars[x[:-1].strip()] >= 3)] #atleast 3 unique characters to exclude homopolymers
 					paths_safe[(sample,haplotype)].append(path_safe)#since we want to keep the safe_node structure from the broken contigs separate
 		#paths_unique = defaultdict(list)
 		print('done storing paths')
@@ -77,11 +77,11 @@ def find_safe_nodes_2(paths, paths_safe, node_lengths):
 
 	for sample in paths:
 		samp_node_set = set()
-		sample_dict = Counter(paths[sample])#get how many times each element appears in the path
-
-		for it in sample_dict:
-			if sample_dict[it] == 1:
-				samp_node_set.add(it) #the nodes passed the first two checks for being safe at this haplotpye level
+		sample_dict = paths[sample]
+		
+		for node, count in sample_dict.items():
+			if count == 1:
+				samp_node_set.add(node) #the nodes passed the first two checks for being safe at this haplotype level
 
 		if len(safe_nodes) == 0 and intersection_counter == 0:
 			safe_nodes = samp_node_set #we only have one haplotype yet so we are moving forward with all the nodes found using this one
@@ -215,16 +215,15 @@ def read_reference_find_nodes(reference, filename, chromosome, inv_start, inv_en
 	node_counts = defaultdict(int)
 	print ('safe_length is ', safe_length)
 	###now we need to extract the nodes fulfilling the node length criteria (safe_length) from our list of final_safe_nodes (because these are selected based on the minimum allowed length but we need to try with longer nodes i.e. length set by the user, first and keep decreasing the length threshold until we find nodes or we hit the lowest allowed length)
-	safe_nodes=[] #these are the safe nodes for this iteration of the function
+	safe_nodes = set() #these are the safe nodes for this iteration of the function
 	for f in final_safe_nodes:
 		if node_lengths[f]>=safe_length:
-			safe_nodes.append(f)
+			safe_nodes.add(f)
 
 	for line_r in gfa_file:
 		line = line_r.split('\t')
 		nodes_of_interest = defaultdict(list)
 		nodes_traversal = defaultdict(list)
-		ref_path = []
 		if  line[0] in ['P'] and reference in line[1] and chromosome in line[1] :
 			right_safe_node = None
 			left_safe_node = None
@@ -235,10 +234,12 @@ def read_reference_find_nodes(reference, filename, chromosome, inv_start, inv_en
 			ref_end = -1
 			node_num = 0 #node number in the path being traversed
 			for node in path:
-				
 				node_num += 1 #we read the next node in the path
-				direction = ['+' if i == '+' else '-' for i in node if i in ['+', '-']][0]
-				node_id = re.split('\+|-', node.strip())[0]
+				node = node.strip()
+				direction = node[-1]
+				if direction not in ('+', '-'):
+					raise ValueError(f"Invalid node orientation: {node}")
+				node_id = node[:-1]
 				node_counts[node_id] += 1
 				node_length = int(node_lengths[node_id])#check the length of this node
 				ref_start = ref_end + 1 #move to the next node's first character
@@ -299,7 +300,6 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 	#this implementation doesn't do the alignment because apparently it is not needed at least for the moment
 	#the above implementations also have some issue because they weren't picking up some haplotype chunks even though they existed e.g. the chm13 one
 	gfa= open(gfa_file, 'r')
-	haplotypes_record = defaultdict(list)
 	seen_samples = defaultdict(int)
 	paths = defaultdict(list)
 	#sample_cons={('HG02145','2')}
@@ -307,7 +307,8 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 		line = line_r.split('\t')
 		if  line[0] in ['P']:
 			nodes_of_interest = defaultdict(list)
-			nodes_traversal = defaultdict(list)
+			#nodes_traversal = defaultdict(list)
+			node_positions = defaultdict(list)
 			sample_info = line[1].split('#')
 			sample = sample_info[0]
 			haplotype = sample_info[1]
@@ -327,19 +328,21 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 						pass
 					print(sample, ' ', haplotype)
 					path = line[2].split(',')
-					paths[(sample,haplotype)].append(path)
 					structure = []
 					node_num = 0 #node number in the path being traversed
 					for node in path:
 						node_num += 1 #we read the next node in the path
-						direction = ['+' if i == '+' else '-' for i in node if i in ['+', '-']][0]
-						node_id = re.split('\+|-', node.strip())[0]
+						node = node.strip()
+						direction = node[-1]
+						if direction not in ('+', '-'):
+							raise ValueError(f"Invalid node orientation: {node}")
+						node_id = node[:-1]
 						#now check where we are w.r.t to the point of start
 						if node_id in anchor_path:
 							#print (node, ' ', node_num)
-							nodes_traversal[node_num] = (node_id, direction)  # keep a record of when this node appeared in the path and in which direction) 
+							#nodes_traversal[node_num] = (node_id, direction)  # keep a record of which node appeared when in the path and in which direction
+							node_positions[node_id].append((node_num, direction)) # keep a record of when a node appeared in the path and in which direction
 							if direction not in nodes_of_interest[node_id]:
-
 								nodes_of_interest[node_id].append(direction) # keep unique orientations for each node traversed
 						elif left_safe_node is not None and node_id == left_safe_node[0]:
 							if (direction == left_safe_node[1]):
@@ -359,13 +362,17 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 					left, right = None, None
 					for r in nodes_of_interest:
 						if len(nodes_of_interest[r]) > 1:
-							#occurrences= [k for k, v in nodes_traversal.items() if (v == (r,'+') or v == (r,'-'))]
-							leftmost_occurrence = min([k for k, v in nodes_traversal.items() if v[0] == r]) #where was the node first found in the path
-							leftmost_occurrence_direction = [v[1] for k, v in nodes_traversal.items() if k == leftmost_occurrence][0] #what was the direction of the node when it was first found
+							occurrences = node_positions[r]
+							leftmost_occurrence = occurrences[0][0] #where was the node first found in the path
+							leftmost_occurrence_direction =  occurrences[0][1] #what was the direction of the node when it was first found
 							#print('leftmost_occ_direction is', leftmost_occurrence_direction)
-							dir_to_find = ['-' if leftmost_occurrence_direction == '+' else '+'][0]
+							dir_to_find = '-' if leftmost_occurrence_direction == '+' else '+'
 							#print('direction to find is', dir_to_find)
-							rightmost_occurrence = max([k for k, v in nodes_traversal.items() if (v[0],v[1]) == (r,dir_to_find)]) #where was the node last found in a reverse orientation
+							rightmost_occurrence = None
+							for pos, orient in reversed(occurrences): #start reading the list from right to left
+								if orient == dir_to_find:
+									rightmost_occurrence = pos
+									break #where was the node last found in a reverse orientation
 
 							if (left is None and right is None) or (leftmost_occurrence < left and rightmost_occurrence > right):
 								left = int(leftmost_occurrence)
@@ -393,8 +400,9 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 							print('and would be flipped')
 							inverted_path = []
 							for s in structure:
-
-								direction = ['+' if i == '-' else '-' for i in s if i in ['+', '-']][0]
+								if s[-1] not in ('+', '-'):
+									raise ValueError(f"Invalid node orientation: {s}")
+								direction = '+' if s[-1] == '-' else '-'
 								inverted_path.append(s[:-1]+direction) #same node inverted orientation
 
 							structure = inverted_path
@@ -412,11 +420,14 @@ def find_anchors_in_haplotypes(gfa_file, anchor_path, writer3, chrom, inv_start,
 						chunk = ' '.join(structure)
 						writer3.write(str(chrom) + '\t' + str(inv_start) + '\t' + str(inv_end) +  '\t'  + str(sample) + '\t' + str(haplotype) +'\t' + str(flank) + '\t' + chunk +  '\n' )
 						seen_samples[(sample,haplotype)] = 1
+						paths.pop((sample, haplotype), None) # we don't need the saved contigs for this haplotype anymore
+
 						
 						
 					else:
 						print ('structure not found in this contig')
 						seen_samples[(sample,haplotype)] = 0
+						paths[(sample,haplotype)].append(path)
 					
 	gfa.close()
 	for samples in seen_samples:
@@ -450,9 +461,12 @@ def find_chunks_using_safe_nodes(paths, left_safe_node, right_safe_node, anchor_
 		inverted_path = []
 		for node in path:
 			node_num += 1
-			direction = ['+' if i == '+' else '-' for i in node if i in ['+', '-']][0]
-			node_id = re.split('\+|-', node.strip())[0]
-			inv_direction = ['-' if i == '+' else '+' for i in node if i in ['+', '-']][0]
+			node = node.strip()
+			direction = node[-1]
+			if direction not in ('+', '-'):
+				raise ValueError(f"Invalid node orientation: {node}")
+			node_id = node[:-1]
+			inv_direction = '+' if node[-1] == '-' else '-'
 			inv_node = node_id + inv_direction #same node but with opposite direction to be kept for alignment later
 			inverted_path.append(inv_node) # to be used in case we have to reverse the contig
 			if node_id in anchor_path and anchor_found is None:
@@ -530,7 +544,6 @@ if __name__== "__main__":
 	node_lengths, node_unique_chars = parse_gfa(args.gfa)
 	paths, paths_safe= find_safe_nodes_1(args.gfa, node_lengths, node_unique_chars, args.safe_len_limit, excluded_haps)
 	del node_unique_chars
-	safe_nodes = []
 	safe_length = args.safe_len
 	safe_lim = args.safe_len_limit
 	#while len(safe_nodes)==0 and safe_length >=safe_lim: #to make sure the safe nodes we find are atleast a certain length

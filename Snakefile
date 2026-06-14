@@ -144,7 +144,7 @@ rule produce_table_all_contigs_simple_bubbles:
         out = w_dir+"/summary_table/Summary_all_contigs_simple_bubbles.tsv"
     params:
         main = w_dir,
-        specific = w_dir+ "final_tables/simple_bubbles/"
+        specific = w_dir+ "/final_tables/simple_bubbles/"
     resources:
         runtime_hrs=2,
         mem_total_mb=30000
@@ -180,7 +180,7 @@ rule produce_table_cont_contigs_simple_bubbles:
         out = w_dir+"/summary_table/Summary_cont_contigs_simple_bubbles.tsv"
     params:
         main = w_dir,
-        specific = w_dir+ "final_tables_cont_contigs/simple_bubbles/"
+        specific = w_dir+ "/final_tables_cont_contigs/simple_bubbles/"
     resources:
         runtime_hrs=2,
         mem_total_mb=30000
@@ -208,7 +208,7 @@ rule final_counts_all:
         else:
             shell("echo 'no haplotype chunks found' && touch {output.out_files}")
 
-rule produce_table_all::
+rule produce_table_all:
     input:
         final_tables_all,
         node_lengths
@@ -216,7 +216,7 @@ rule produce_table_all::
         out = w_dir+"/summary_table/Summary_all_contigs_all_bubbles.tsv"
     params:
         main = w_dir,
-        specific = w_dir+ "final_tables/all_bubbles/"
+        specific = w_dir+ "/final_tables/all_bubbles/"
     resources:
         runtime_hrs=2,
         mem_total_mb=30000
@@ -244,7 +244,7 @@ rule final_counts_cont_contigs_all:
         else:
             shell("echo 'no haplotype chunks found' && touch {output.out_files}")
 
-rule produce_table_all::
+rule produce_table_all_cont_contigs:
     input:
         final_tables_cont_contigs_all,
         node_lengths
@@ -252,7 +252,7 @@ rule produce_table_all::
         out = w_dir+"/summary_table/Summary_cont_contigs_all_bubbles.tsv"
     params:
         main = w_dir,
-        specific = w_dir+ "final_tables_cont_contigs/all_bubbles/"
+        specific = w_dir+ "/final_tables_cont_contigs/all_bubbles/"
     resources:
         runtime_hrs=2,
         mem_total_mb=30000
