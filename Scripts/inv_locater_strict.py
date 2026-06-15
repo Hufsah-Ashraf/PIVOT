@@ -46,6 +46,9 @@ def find_safe_nodes_1(filename, node_lengths, node_unique_chars, safe_len_limit,
 				sample_info = line[1].split('#')
 				sample = sample_info[0]
 				haplotype = sample_info[1]
+				contig_name =  sample_info[2]
+				if (sample == args.ref and haplotype == args.ref_hap and "_random" in contig_name): #to handle case like GRCh38#0#chr1_random which later raise an assertion error as we need the reference to be in only one contig for the safe_nodes orientation consisteny check
+					continue
 				if f"{sample}#{haplotype}" not in excluded_haps:
 					path_safe=defaultdict(list)
 					for x in line[2].split(','):
